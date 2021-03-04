@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	goerrors "errors"
+
 	"os"
 	"strings"
 	"time"
@@ -37,7 +39,11 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
+	goversion "github.com/hashicorp/go-version"
 	"github.com/spf13/cobra"
+	submarinerclientset "github.com/submariner-io/submariner-operator/pkg/client/clientset/versioned"
+	"github.com/submariner-io/submariner-operator/pkg/subctl/operator/submarinercr"
+	"github.com/submariner-io/submariner-operator/pkg/version"
 )
 
 var (
@@ -233,4 +239,26 @@ var nodeLabelBackoff wait.Backoff = wait.Backoff{
 	Duration: 1 * time.Second,
 	Factor:   1.2,
 	Jitter:   1,
+}
+
+func checkVersionMismatch(cmd *cobra.Command, args []string) error {
+	config, err := getRestConfig(kubeConfig, kubeContext)
+	exitOnError("The provided kubeconfig is invalid", err)
+
+	clientSet, err := submarinerclientset.NewForConfig(config)
+	exitOnError("Unable to get the Submariner config", err)
+
+	submariner, _ := clientSet.SubmarinerV1alpha1().Submariners(OperatorNamespace).Get(submarinercr.SubmarinerName, metav1.GetOptions{})
+
+	if submariner != nil && submariner.Spec.Version != "" {
+		subctlVer, _ := goversion.NewVersion(version.Version)
+		submarinerVer, _ := goversion.NewVersion(submariner.Spec.Version)
+
+		if subctlVer != nil && submarinerVer != nil && subctlVer.LessThan(submarinerVer) {
+			return goerrors.New("Detected submariner version: " + submariner.Spec.Version +
+				". subctl " + version.Version + " is too old. Please upgrade your CLI version.")
+		}
+	}
+
+	return nil
 }
